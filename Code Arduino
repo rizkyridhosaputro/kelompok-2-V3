@@ -1,0 +1,105 @@
+#include <Encoder.h>
+
+// Pin Encoder
+#define ENCODER_PIN_A 2
+#define ENCODER_PIN_B 3
+
+// Pin Motor
+#define MOTOR_PIN_PWM 9
+#define MOTOR_PIN_DIR 8
+
+// Encoder dan PID
+Encoder motorEncoder(ENCODER_PIN_A, ENCODER_PIN_B);
+volatile long prevPosition = 0;  // Menyimpan posisi encoder sebelumnya
+
+// Variabel PID
+float Kp = 0.02, Ki = 0.00015, Kd = 0;  // Parameter PID default
+float setpoint = 50;  // Setpoint default RPM
+float error = 0, prevError = 0, integral = 0, derivative = 0;
+float motorOutput = 0;  // Output motor yang dihitung dengan PID
+
+// RPM Measurement
+unsigned long prevTime = 0;  // Waktu sebelumnya untuk menghitung RPM
+float rpm = 0;
+
+void setup() {
+  // Inisialisasi komunikasi serial
+  Serial.begin(9600);
+
+  // Inisialisasi pin motor
+  pinMode(MOTOR_PIN_PWM, OUTPUT);
+  pinMode(MOTOR_PIN_DIR, OUTPUT);
+}
+
+void loop() {
+  // Menghitung waktu delta untuk perhitungan RPM
+  unsigned long currentTime = millis();
+  float deltaTime = (currentTime - prevTime) / 1000.0; // Delta waktu dalam detik
+
+  // Jika sudah lebih dari 100ms, lakukan perhitungan RPM dan PID
+  if (deltaTime >= 0.1) {  // Update setiap 100ms
+    // Menghitung RPM berdasarkan pergerakan encoder
+    long currentPosition = motorEncoder.read();
+    long deltaPosition = currentPosition - prevPosition;
+    rpm = (deltaPosition / 20.0) * 60.0; // 20 = jumlah langkah encoder per putaran
+    prevPosition = currentPosition;
+
+    // Kontrol PID untuk motor
+    error = setpoint - rpm;
+    integral += error * deltaTime;
+    derivative = (error - prevError) / deltaTime;
+    motorOutput = Kp * error + Ki * integral + Kd * derivative;
+    prevError = error;
+
+    // Batasi nilai output motor agar tidak melebihi rentang PWM
+    motorOutput = constrain(motorOutput, -255, 255);
+
+    // Menggerakkan motor berdasarkan output PID
+    if (motorOutput > 0) {
+      analogWrite(MOTOR_PIN_PWM, motorOutput);  // Atur kecepatan PWM
+      digitalWrite(MOTOR_PIN_DIR, HIGH);  // Tentukan arah motor
+    } else {
+      analogWrite(MOTOR_PIN_PWM, -motorOutput);  // Atur kecepatan PWM (dengan tanda negatif)
+      digitalWrite(MOTOR_PIN_DIR, LOW);  // Tentukan arah motor berlawanan
+    }
+
+    // Kirim data RPM dan setpoint kembali ke PC
+    Serial.print("RPM:");
+    Serial.print(rpm, 2);
+    Serial.print(",SETPOINT:");
+    Serial.println(setpoint, 2);
+
+    // Update waktu untuk perhitungan RPM berikutnya
+    prevTime = currentTime;
+  }
+
+  // Cek apakah ada perintah serial yang masuk dari PC
+  handleSerialCommands();
+}
+
+void handleSerialCommands() {
+  // Jika ada data yang masuk lewat serial
+  if (Serial.available() > 0) {
+    String command = Serial.readStringUntil('\n');  // Membaca perintah sampai newline
+
+    // Proses perintah PID
+    if (command.startsWith("PID:")) {
+      int comma1 = command.indexOf(',');
+      int comma2 = command.lastIndexOf(',');
+
+      // Memastikan perintah PID dalam format yang benar
+      if (comma1 > 4 && comma2 > comma1) {
+        Kp = command.substring(4, comma1).toFloat();
+        Ki = command.substring(comma1 + 1, comma2).toFloat();
+        Kd = command.substring(comma2 + 1).toFloat();
+        Serial.println("PID Updated");  // Memberitahu bahwa PID sudah diperbarui
+      }
+    }
+
+    // Proses perintah Setpoint
+    if (command.startsWith("SET:")) {
+      setpoint = command.substring(4).toFloat();  // Mengubah setpoint
+      Serial.println("Setpoint Updated");  // Memberitahu bahwa setpoint sudah diperbarui
+    }
+  }
+}
