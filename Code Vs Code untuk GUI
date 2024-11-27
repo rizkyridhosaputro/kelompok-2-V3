@@ -1,0 +1,204 @@
+import sys
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QLabel, QLineEdit, QPushButton,
+    QVBoxLayout, QHBoxLayout, QComboBox, QTabWidget, QGroupBox, QFormLayout
+)
+from PyQt5.QtGui import QPixmap
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+import serial
+import serial.tools.list_ports
+
+
+class PIDControllerApp(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Enhanced PID Controller with Tabs")
+        self.setGeometry(100, 100, 800, 600)
+        self.serial_connection = None
+        self.timer = QTimer(self)
+        self.initUI()
+        self.init_serial_ports()
+
+    def initUI(self):
+        main_layout = QVBoxLayout()
+
+        # Add UNY Logo at the top
+        logo_label = QLabel(self)
+        pixmap = QPixmap("Logo_motto_UNY.png")
+        pixmap = pixmap.scaled(500, 100, Qt.KeepAspectRatio)
+        logo_label.setPixmap(pixmap)
+        logo_label.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(logo_label)
+
+        # Tab Widget
+        self.tabs = QTabWidget(self)
+
+        # Tab 1: Control Panel
+        self.control_tab = QWidget()
+        self.tabs.addTab(self.control_tab, "Control Panel")
+        self.init_control_panel()
+
+        # Tab 2: Data Visualization
+        self.plot_tab = QWidget()
+        self.tabs.addTab(self.plot_tab, "Data Visualization")
+        self.init_plot_tab()
+
+        main_layout.addWidget(self.tabs)
+        self.setLayout(main_layout)
+
+    def init_control_panel(self):
+        layout = QVBoxLayout()
+
+        # Connection Settings
+        connection_group = QGroupBox("Connection Settings")
+        connection_layout = QFormLayout()
+
+        self.com_combo = QComboBox()
+        connection_layout.addRow("COM Port:", self.com_combo)
+
+        self.connect_button = QPushButton("Connect")
+        self.connect_button.clicked.connect(self.connect_serial)
+        connection_layout.addRow("", self.connect_button)
+
+        self.disconnect_button = QPushButton("Disconnect")
+        self.disconnect_button.setEnabled(False)
+        self.disconnect_button.clicked.connect(self.disconnect_serial)
+        connection_layout.addRow("", self.disconnect_button)
+
+        connection_group.setLayout(connection_layout)
+        layout.addWidget(connection_group)
+
+        # PID Parameters
+        pid_group = QGroupBox("PID Parameters")
+        pid_layout = QFormLayout()
+
+        self.kp_input = QLineEdit("0.02")
+        self.ki_input = QLineEdit("0.00015")
+        self.kd_input = QLineEdit("0")
+        self.setpoint_input = QLineEdit("50")
+
+        pid_layout.addRow("Kp:", self.kp_input)
+        pid_layout.addRow("Ki:", self.ki_input)
+        pid_layout.addRow("Kd:", self.kd_input)
+        pid_layout.addRow("Setpoint:", self.setpoint_input)
+
+        self.send_button = QPushButton("Send Parameters")
+        self.send_button.setEnabled(False)
+        self.send_button.clicked.connect(self.send_pid_setpoint)
+        pid_layout.addRow("", self.send_button)
+
+        pid_group.setLayout(pid_layout)
+        layout.addWidget(pid_group)
+
+        self.control_tab.setLayout(layout)
+
+    def init_plot_tab(self):
+        layout = QVBoxLayout()
+        self.plot_canvas = PlotCanvas(self, width=7, height=5)
+        layout.addWidget(self.plot_canvas)
+        self.plot_tab.setLayout(layout)
+
+    def init_serial_ports(self):
+        ports = serial.tools.list_ports.comports()
+        self.com_combo.clear()
+        self.com_combo.addItems([port.device for port in ports])
+
+    def connect_serial(self):
+        port = self.com_combo.currentText()
+        try:
+            self.serial_connection = serial.Serial(port, 9600, timeout=1)
+            self.connect_button.setEnabled(False)
+            self.disconnect_button.setEnabled(True)
+            self.send_button.setEnabled(True)
+            
+            # Start reading data
+            self.timer.timeout.connect(self.read_serial_data)
+            self.timer.start(100)  # 100ms interval
+            print(f"Connected to {port}")
+        except Exception as e:
+            print(f"Failed to connect: {e}")
+
+    def disconnect_serial(self):
+        if self.serial_connection and self.serial_connection.is_open:
+            self.timer.stop()
+            self.serial_connection.close()
+        self.connect_button.setEnabled(True)
+        self.disconnect_button.setEnabled(False)
+        self.send_button.setEnabled(False)
+        print("Disconnected")
+
+    def send_pid_setpoint(self):
+        if self.serial_connection and self.serial_connection.is_open:
+            try:
+                # Send PID parameters
+                pid_command = f"PID:{self.kp_input.text()},{self.ki_input.text()},{self.kd_input.text()}\n"
+                self.serial_connection.write(pid_command.encode())
+                self.serial_connection.flush()
+                print(f"Sent PID: {pid_command.strip()}")
+                
+                # Wait a bit before sending setpoint
+                self.serial_connection.reset_input_buffer()
+                
+                # Send setpoint
+                setpoint_command = f"SET:{self.setpoint_input.text()}\n"
+                self.serial_connection.write(setpoint_command.encode())
+                self.serial_connection.flush()
+                print(f"Sent Setpoint: {setpoint_command.strip()}")
+            except Exception as e:
+                print(f"Failed to send parameters: {e}")
+
+    def read_serial_data(self):
+        if self.serial_connection and self.serial_connection.is_open:
+            try:
+                if self.serial_connection.in_waiting:
+                    line = self.serial_connection.readline().decode().strip()
+                    print(f"Received: {line}")  # Debug print
+                    
+                    if "RPM:" in line and "SETPOINT:" in line:
+                        parts = line.split(',')
+                        if len(parts) == 2:
+                            rpm = float(parts[0].split(':')[1])
+                            setpoint = float(parts[1].split(':')[1])
+                            self.plot_canvas.update_plot(rpm, setpoint)
+            except Exception as e:
+                print(f"Error reading data: {e}")
+
+
+class PlotCanvas(FigureCanvas):
+    def __init__(self, parent=None, width=5, height=3, dpi=100):
+        fig = Figure(figsize=(width, height), dpi=dpi)
+        self.axes = fig.add_subplot(111)
+        super().__init__(fig)
+        self.setParent(parent)
+        
+        self.rpm_data = []
+        self.setpoint_data = []
+        self.max_points = 100  # Maximum number of points to display
+
+    def update_plot(self, rpm, setpoint):
+        self.rpm_data.append(rpm)
+        self.setpoint_data.append(setpoint)
+        
+        # Keep only the last max_points
+        if len(self.rpm_data) > self.max_points:
+            self.rpm_data.pop(0)
+            self.setpoint_data.pop(0)
+        
+        self.axes.clear()
+        self.axes.plot(self.rpm_data, label='Actual RPM', color='blue')
+        self.axes.plot(self.setpoint_data, label='Setpoint', color='red', linestyle='--')
+        self.axes.legend()
+        self.axes.set_title('Motor RPM vs Time')
+        self.axes.set_xlabel('Time (samples)')
+        self.axes.set_ylabel('RPM')
+        self.axes.grid(True)
+        self.draw()
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    main_window = PIDControllerApp()
+    main_window.show()
+    sys.exit(app.exec_())
