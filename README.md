@@ -1,2 +1,8 @@
 # kelompok-2-V3
-- Rizky Ridho Saputro, Azhar Aiman Putra, Sumantri Suria Atmaja, Hieronemos Arya Dewangga. Pengendalian Motor DC Encoder Berbasis GUI (Graphical User Interface) dengan Tuning Parameter PID (Proportional Integral Derivative) dan Visualisasi Grafik
+Pengendalian Motor DC Encoder Berbasis GUI (Graphical User Interface) dengan Tuning Parameter PID (Proportional Integral Derivative) dan Visualisasi Grafik
+
+Anggota kelompok :
+1. Rizky Ridho Saputro (23090620066)
+2. Azhar Aiman Putra (23090620073)
+3. Sumantri Suria Atmaja (23090620057)
+4. Hieronemos Arya Dewangga (23090620085)
